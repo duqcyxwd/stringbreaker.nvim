@@ -74,5 +74,8 @@ function demonstrateStrings() {
   console.log(`- apiDocumentation: ${apiDocumentation.length} characters`);
 }
 
+// Some text test
+// Test double quote "This is double quote"
+
 // Call the demonstration function
 demonstrateStrings();

@@ -63,20 +63,6 @@ local function check_treesitter()
   return true
 end
 
--- Get current mode
--- @return string 'normal', 'visual', or 'unknown'
-function M._get_mode()
-  if visual_handler.is_visual_mode() then
-    return 'visual'
-  end
-
-  local mode = vim.fn.mode()
-  if mode == 'n' then
-    return 'normal'
-  end
-
-  return 'unknown'
-end
 
 -- Handle string detection in normal mode
 -- @return table|nil String information or error information
@@ -152,12 +138,12 @@ function M.break_string()
     end
 
     -- Detect current mode and get string information
-    local mode = M._get_mode()
+    local mode = vim.fn.mode()
     local string_result
 
-    if mode == 'visual' then
+    if mode == 'v' or mode == 'V' or mode == '\22' then
       string_result = M._handle_visual_mode()
-    elseif mode == 'normal' then
+    elseif mode == 'n' then
       string_result = M._handle_normal_mode()
     else
       return {
@@ -251,8 +237,6 @@ function M.break_string()
   end)
 
   if not success then
-    vim.notify(result, vim.log.levels.ERROR)
-    vim.notify(vim.inspect(result), vim.log.levels.ERROR)
     return {
       success = false,
       error_code = 'UNEXPECTED_ERROR',
@@ -371,12 +355,12 @@ end
 function M.preview()
   local success, result = pcall(function()
     -- Detect current mode and get string information
-    local mode = M._get_mode()
+    local mode = vim.fn.mode()
     local string_result
 
-    if mode == 'visual' then
+    if mode == 'v' or mode == 'V' or mode == '\22' then
       string_result = M._handle_visual_mode()
-    elseif mode == 'normal' then
+    elseif mode == 'n' then
       string_result = M._handle_normal_mode()
     else
       return {
@@ -756,6 +740,249 @@ function M.setup(opts)
   if opts then
     config = vim.tbl_deep_extend('force', config, opts)
   end
+end
+
+-- Escape selected string content
+-- @param quote_type string Quote type parameter ('single' or 'double')
+-- @return table API response
+function M.escape_string(quote_type)
+  local success, result = pcall(function()
+    -- Check if current buffer is modifiable
+    local current_bufnr = vim.api.nvim_get_current_buf()
+    if not vim.api.nvim_buf_get_option(current_bufnr, 'modifiable') then
+      return {
+        success = false,
+        error_code = 'BUFFER_NOT_MODIFIABLE',
+        message = 'Current buffer is not modifiable. Cannot escape string in read-only buffer.',
+        suggestions = {
+          'Check if file is read-only',
+          'Ensure you have file write permissions',
+          'Try using :set modifiable command'
+        }
+      }
+    end
+
+    -- Detect current mode and get string information
+    local mode = vim.fn.mode()
+    local string_result
+
+    vim.notify(mode, vim.log.levels.INFO)
+
+    if mode == 'v' or mode == 'V' or mode == '\22' then
+      string_result = M._handle_visual_mode()
+    elseif mode == 'n' then
+      string_result = M._handle_normal_mode()
+    else
+      return {
+        success = false,
+        error_code = 'UNSUPPORTED_MODE',
+        message = 'Unsupported editor mode. Please use this feature in normal mode or visual mode.',
+        suggestions = {
+          'Press Esc key to return to normal mode',
+          'Use v key to enter visual mode and select text',
+          'Check current editor state'
+        }
+      }
+    end
+
+    if not string_result.success then
+      return string_result
+    end
+
+    local string_info = string_result.data
+
+    -- Validate string content
+    if not string_info.inner_content or string_info.inner_content == '' then
+      return {
+        success = false,
+        error_code = 'EMPTY_CONTENT',
+        message = 'Empty content detected. No content to escape.',
+        suggestions = {
+          'Select text that contains content',
+          'Check if selection actually contains text',
+          'Try selecting a larger text range'
+        }
+      }
+    end
+
+    -- Determine quote type for escaping
+    local escape_quote_type = '"' -- default to double quote
+    if quote_type then
+      if quote_type:lower() == 'single' then
+        escape_quote_type = "'"
+      elseif quote_type:lower() == 'double' then
+        escape_quote_type = '"'
+      end
+    end
+
+    -- Escape the content
+    local escaped_content = escape_handler.escape(string_info.inner_content, escape_quote_type)
+
+    -- Replace the content in the buffer
+    local start_row = string_info.start_pos[1] - 1
+    local start_col = string_info.start_pos[2]
+    local end_row = string_info.end_pos[1] - 1
+    local end_col = string_info.end_pos[2]
+
+    -- For visual mode, we want to replace just the selected content
+    if mode == 'v' or mode == 'V' or mode == '\22' then
+      start_col = string_info.start_pos[2]
+      end_col = string_info.end_pos[2]
+    else
+      -- For normal mode with treesitter, replace just the inner content
+      start_col = string_info.start_pos[2] + 1 -- Skip opening quote
+      end_col = string_info.end_pos[2] - 1     -- Skip closing quote
+    end
+
+    -- Split the escaped content into lines for replacement
+    local replacement_lines = vim.split(escaped_content, '\n', { plain = true })
+
+    -- Replace the text in the buffer
+    vim.api.nvim_buf_set_text(current_bufnr, start_row, start_col, end_row, end_col, replacement_lines)
+
+    return {
+      success = true,
+      message = 'String content escaped successfully using ' .. (quote_type or 'double') .. ' quote rules.',
+      data = {
+        quote_type = escape_quote_type,
+        original_length = #string_info.inner_content,
+        escaped_length = #escaped_content,
+        mode = mode
+      }
+    }
+  end)
+
+  if not success then
+    return {
+      success = false,
+      error_code = 'UNEXPECTED_ERROR',
+      message = 'Unexpected error occurred while escaping string: ' .. tostring(result),
+      suggestions = {
+        'Check plugin installation and configuration',
+        'Check Neovim logs for detailed information',
+        'Restart Neovim and try again'
+      }
+    }
+  end
+
+  return result
+end
+
+-- Unescape selected string content
+-- @param quote_type string Quote type parameter ('single' or 'double')
+-- @return table API response
+function M.unescape_string(quote_type)
+  local success, result = pcall(function()
+    -- Check if current buffer is modifiable
+    local current_bufnr = vim.api.nvim_get_current_buf()
+    if not vim.api.nvim_buf_get_option(current_bufnr, 'modifiable') then
+      return {
+        success = false,
+        error_code = 'BUFFER_NOT_MODIFIABLE',
+        message = 'Current buffer is not modifiable. Cannot unescape string in read-only buffer.',
+        suggestions = {
+          'Check if file is read-only',
+          'Ensure you have file write permissions',
+          'Try using :set modifiable command'
+        }
+      }
+    end
+
+    -- Detect current mode and get string information
+    local mode = vim.fn.mode()
+    local string_result
+
+
+    if mode == 'v' or mode == 'V' or mode == '\22' then
+      string_result = M._handle_visual_mode()
+
+      vim.notify(mode, vim.log.levels.INFO)
+      vim.notify(vim.inspect(string_result), vim.log.levels.INFO)
+    elseif mode == 'n' then
+      string_result = M._handle_normal_mode()
+    else
+      return {
+        success = false,
+        error_code = 'UNSUPPORTED_MODE',
+        message = 'Unsupported editor mode. Please use this feature in normal mode or visual mode.',
+        suggestions = {
+          'Press Esc key to return to normal mode',
+          'Use v key to enter visual mode and select text',
+          'Check current editor state'
+        }
+      }
+    end
+
+    if not string_result.success then
+      return string_result
+    end
+
+    local string_info = string_result.data
+
+    -- Validate string content
+    if not string_info.inner_content or string_info.inner_content == '' then
+      return {
+        success = false,
+        error_code = 'EMPTY_CONTENT',
+        message = 'Empty content detected. No content to unescape.',
+        suggestions = {
+          'Select text that contains content',
+          'Check if selection actually contains text',
+          'Try selecting a larger text range'
+        }
+      }
+    end
+
+    -- Unescape the content
+    local unescaped_content = escape_handler.unescape(string_info.inner_content)
+
+    -- Replace the content in the buffer
+    local start_row = string_info.start_pos[1] - 1
+    local start_col = string_info.start_pos[2]
+    local end_row = string_info.end_pos[1] - 1
+    local end_col = string_info.end_pos[2]
+
+    -- For visual mode, we want to replace just the selected content
+    if mode == 'v' or mode == 'V' or mode == '\22' then
+      start_col = string_info.start_pos[2]
+      end_col = string_info.end_pos[2]
+    else
+      -- For normal mode with treesitter, replace just the inner content
+      start_col = string_info.start_pos[2] + 1 -- Skip opening quote
+      end_col = string_info.end_pos[2] - 1     -- Skip closing quote
+    end
+
+    -- Split the unescaped content into lines for replacement
+    local replacement_lines = vim.split(unescaped_content, '\n', { plain = true })
+
+    -- Replace the text in the buffer
+    vim.api.nvim_buf_set_text(current_bufnr, start_row, start_col, end_row, end_col, replacement_lines)
+
+    return {
+      success = true,
+      message = 'String content unescaped successfully.',
+      data = {
+        original_length = #string_info.inner_content,
+        unescaped_length = #unescaped_content,
+        mode = mode
+      }
+    }
+  end)
+
+  if not success then
+    return {
+      success = false,
+      error_code = 'UNEXPECTED_ERROR',
+      message = 'Unexpected error occurred while unescaping string: ' .. tostring(result),
+      suggestions = {
+        'Check plugin installation and configuration',
+        'Check Neovim logs for detailed information',
+        'Restart Neovim and try again'
+      }
+    }
+  end
+
+  return result
 end
 
 -- Get current configuration

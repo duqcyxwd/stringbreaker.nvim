@@ -16,18 +16,15 @@ function M.unescape(str)
   -- Note: Must handle double backslashes first to avoid conflicts with other escape sequences
   local result = str
 
-  -- Use a more unique placeholder to avoid conflicts
-  local placeholder = "\x00DOUBLE_BACKSLASH\x00"
-
-  -- result = result:gsub("\\\\", placeholder)  -- Temporarily replace double backslashes
-  result = result:gsub("\\n", "\n")  -- Newline
-  result = result:gsub("\\t", "\t")  -- Tab
-  result = result:gsub("\\r", "\r")  -- Carriage return
-  result = result:gsub("\\\"", "\"") -- Double quote
-  result = result:gsub("\\'", "'")   -- Single quote
-  result = result:gsub('\\"', '"')   -- Single quote
-  result = result:gsub("\\0", "\0")  -- Null character
-  -- result = result:gsub(placeholder, "\\")    -- Restore single backslash
+  -- Handle escape sequences in the correct order
+  result = result:gsub("\\\\", "\x01")  -- Temporarily replace double backslashes with safe placeholder
+  result = result:gsub("\\n", "\n")     -- Newline
+  result = result:gsub("\\t", "\t")     -- Tab
+  result = result:gsub("\\r", "\r")     -- Carriage return
+  result = result:gsub("\\\"", "\"")    -- Double quote
+  result = result:gsub("\\'", "'")      -- Single quote
+  result = result:gsub("\\0", "\0")     -- Null character
+  result = result:gsub("\x01", "\\")    -- Restore single backslash
 
   return result
 end

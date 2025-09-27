@@ -198,11 +198,4 @@ function M.get_current_visual_string_info()
   return M.selection_to_string_info(selection)
 end
 
--- Check if in visual mode
--- @return boolean Whether in visual mode
-function M.is_visual_mode()
-  local mode = vim.fn.mode()
-  return mode == 'v' or mode == 'V' or mode == '\22'
-end
-
 return M

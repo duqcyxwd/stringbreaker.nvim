@@ -261,21 +261,6 @@ print("Use floating window: " .. tostring(config.preview.use_float))
 
 These functions are primarily for internal use, but can also be called in advanced scenarios.
 
-### `stringBreaker._get_mode()`
-
-Get current editor mode.
-
-**Return Value**: `string` - `'normal'`, `'visual'`, or `'unknown'`
-
-**Example**:
-```lua
-local mode = stringBreaker._get_mode()
-if mode == 'visual' then
-  print("Currently in visual mode")
-elseif mode == 'normal' then
-  print("Currently in normal mode")
-end
-```
 
 ---
 
@@ -462,13 +447,13 @@ end
 local stringBreaker = require('string-breaker')
 
 local function smart_edit()
-  local mode = stringBreaker._get_mode()
+  local mode = vim.fn.mode()
   
-  if mode == 'visual' then
+  if mode == 'v' or mode == 'V' or mode == '\22' then
     -- Visual mode: edit selection directly
     vim.notify('Editing visual selection...', vim.log.levels.INFO)
     return stringBreaker.break_string()
-  elseif mode == 'normal' then
+  elseif mode == 'n' then
     -- Normal mode: try string detection
     vim.notify('Detecting string at cursor...', vim.log.levels.INFO)
     return stringBreaker.break_string()
