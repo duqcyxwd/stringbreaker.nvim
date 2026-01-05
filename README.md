@@ -79,6 +79,8 @@ use {
 #### String Manipulation Commands
 - `:StringEscape [single|double]` - Escape selected string content or string at cursor
 - `:StringUnescape` - Unescape selected string content or string at cursor
+- `:StringWrap [single|double]` - Wrap selected text in quotes and escape content
+- `:StringUnwrap` - Unwrap string (unescape content and remove quotes)
 
 **Standard Vim commands also work:**
 - `:w` or `:write` - Save changes (automatically syncs with original file)
@@ -180,6 +182,11 @@ vim.keymap.set({'n', 'v'}, '<space>fes', stringBreaker.break_string, { desc = 'B
 vim.keymap.set({'n', 'v'}, '<space>fep', stringBreaker.preview, { desc = 'Preview string content' })
 vim.keymap.set('n', '<space>fec', stringBreaker.cancel, { desc = 'Cancel string editing' })
 
+-- New commands keymappings
+vim.keymap.set('v', 'S\'', function() stringBreaker.wrap_string('single') end, { desc = 'Wrap selection in quotes' })
+vim.keymap.set('v', 'S"', function() stringBreaker.wrap_string('double') end, { desc = 'Wrap selection in quotes' })
+vim.keymap.set({'n', 'v'}, '[W', stringBreaker.unwrap_string, { desc = 'Unwrap string (remove quotes)' })
+
 
 -- Auto-keybindings in string editor buffers
 vim.api.nvim_create_autocmd('FileType', {
@@ -227,7 +234,21 @@ local result = stringBreaker.unescape_string()
 if result.success then
   print("Unescaped successfully")
   print("Original length: " .. result.data.original_length)
+  print("Unescaped successfully")
+  print("Original length: " .. result.data.original_length)
   print("Unescaped length: " .. result.data.unescaped_length)
+end
+
+-- Wrap string (Visual mode only)
+local result = stringBreaker.wrap_string("double")
+if result.success then
+  print("Wrapped successfully")
+end
+
+-- Unwrap string
+local result = stringBreaker.unwrap_string()
+if result.success then
+  print("Unwrapped successfully")
 end
 
 -- Synchronize changes with original file (in editing buffer)

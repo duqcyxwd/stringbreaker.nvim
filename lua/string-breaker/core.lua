@@ -280,6 +280,36 @@ local function show_preview(content, source_type)
   end
 end
 
+-- Helper: Select the updated range of text
+-- @param start_row number 0-indexed start row
+-- @param start_col number 0-indexed start column
+-- @param replacement_lines table List of replacement lines
+-- @param mode string Previous editor mode
+local function select_updated_range(start_row, start_col, replacement_lines, mode)
+  -- Calculate new end position
+  local new_end_row = start_row + #replacement_lines - 1
+  local new_end_col
+  if #replacement_lines == 1 then
+    new_end_col = start_col + #replacement_lines[1]
+  else
+    new_end_col = #replacement_lines[#replacement_lines]
+  end
+
+  -- If in visual mode, return to normal mode first
+  if mode == 'v' or mode == 'V' or mode == '\22' then
+    vim.api.nvim_win_set_cursor(0, { start_row + 1, start_col })
+    vim.cmd('normal! o')
+    local cursor_end_col = new_end_col > 0 and new_end_col - 1 or 0
+    vim.api.nvim_win_set_cursor(0, { new_end_row + 1, cursor_end_col })
+  else
+    -- NORMAL MODE: Select the updated text
+    vim.api.nvim_win_set_cursor(0, { start_row + 1, start_col })
+    vim.cmd('normal! v')
+    local cursor_end_col = new_end_col > 0 and new_end_col - 1 or 0
+    vim.api.nvim_win_set_cursor(0, { new_end_row + 1, cursor_end_col })
+  end
+end
+
 -- Show floating window preview
 -- @param content string Preview content
 -- @param source_type string Content source type
@@ -838,6 +868,8 @@ function M.escape_string(quote_type)
     -- Replace the text in the buffer
     vim.api.nvim_buf_set_text(current_bufnr, start_row, start_col, end_row, end_col, replacement_lines)
 
+    select_updated_range(start_row, start_col, replacement_lines, mode)
+
     return {
       success = true,
       message = 'String content escaped successfully using ' .. (quote_type or 'double') .. ' quote rules.',
@@ -938,30 +970,6 @@ function M.unescape_string()
 
     -- For visual mode, we want to replace just the selected content
     if mode == 'v' or mode == 'V' or mode == '\22' then
-       -- In visual mode, start_pos and end_pos from handle_visual_mode are usually the exact range
-       -- But handle_visual_mode returns 'inner_content' logic?
-       -- Let's check visual_handler again.
-       -- selection_to_string_info returns start_pos etc.
-       -- If I am unescaping, I probably want to replace the WHOLE selection?
-       -- Wait, unescape usually takes existing string and removes escapes.
-       -- If I have `"foo\"bar"`, visual mode selects it all.
-       -- `inner_content` logic in visual_handler:
-       --  `extract_inner_content` removes surrounding quotes if they exist.
-       -- So if I selected `"foo\"bar"`, inner is `foo\"bar`. Unescaped is `foo"bar`.
-       -- If I replace WHOLE selection (`"foo\"bar"`), I replace it with `foo"bar`.
-       -- But wait, standard unescape logic usually replaces existing string with raw string.
-       -- The original code had:
-       
-       -- if mode == 'v'... 
-       --   start_col = string_info.start_pos[2]
-       --   end_col = string_info.end_pos[2]
-       -- else ...
-       --   start_col = string_info.start_pos[2] + 1
-       --   end_col = string_info.end_pos[2] - 1
-       
-       -- This implies in visual mode we replace everything selected.
-       -- In normal mode (treesitter), `string_info` includes quotes, so we +1/-1 to replace inner.
-       
        start_col = string_info.start_pos[2]
        end_col = string_info.end_pos[2]
     else
@@ -975,6 +983,8 @@ function M.unescape_string()
 
     -- Replace the text in the buffer
     vim.api.nvim_buf_set_text(current_bufnr, start_row, start_col, end_row, end_col, replacement_lines)
+
+    select_updated_range(start_row, start_col, replacement_lines, mode)
 
     return {
       success = true,
@@ -1092,9 +1102,8 @@ function M.wrap_string(quote_type)
     local replacement_lines = vim.split(wrapped_content, '\n', { plain = true })
 
     vim.api.nvim_buf_set_text(current_bufnr, start_row, start_col, end_row, end_col, replacement_lines)
-    
-     -- Restore normal mode to clear visual selection
-    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<Esc>', true, false, true), 'n', false)
+
+    select_updated_range(start_row, start_col, replacement_lines, mode)
 
     return {
       success = true,
@@ -1184,11 +1193,12 @@ function M.unwrap_string()
 
     -- Replace the text in the buffer
     vim.api.nvim_buf_set_text(current_bufnr, start_row, start_col, end_row, end_col, replacement_lines)
-    
-    -- -- If in visual mode, return to normal mode
-    -- if mode == 'v' or mode == 'V' or mode == '\22' then
-    --    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<Esc>', true, false, true), 'n', false)
-    -- end
+
+
+    select_updated_range(start_row, start_col, replacement_lines, mode)
+
+    -- // print start and end position
+    vim.notify('Start position: ' .. start_row .. ',' .. start_col .. '\nEnd position: ' .. end_row .. ',' .. end_col)
 
     return {
       success = true,
