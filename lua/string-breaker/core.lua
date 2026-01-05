@@ -766,8 +766,6 @@ function M.escape_string(quote_type)
     local mode = vim.fn.mode()
     local string_result
 
-    vim.notify(mode, vim.log.levels.INFO)
-
     if mode == 'v' or mode == 'V' or mode == '\22' then
       string_result = M._handle_visual_mode()
     elseif mode == 'n' then
@@ -808,9 +806,9 @@ function M.escape_string(quote_type)
     -- Determine quote type for escaping
     local escape_quote_type = '"' -- default to double quote
     if quote_type then
-      if quote_type:lower() == 'single' then
+      if quote_type == 'single' then
         escape_quote_type = "'"
-      elseif quote_type:lower() == 'double' then
+      elseif quote_type == 'double' then
         escape_quote_type = '"'
       end
     end
@@ -869,9 +867,8 @@ function M.escape_string(quote_type)
 end
 
 -- Unescape selected string content
--- @param quote_type string Quote type parameter ('single' or 'double')
 -- @return table API response
-function M.unescape_string(quote_type)
+function M.unescape_string()
   local success, result = pcall(function()
     -- Check if current buffer is modifiable
     local current_bufnr = vim.api.nvim_get_current_buf()
@@ -895,9 +892,6 @@ function M.unescape_string(quote_type)
 
     if mode == 'v' or mode == 'V' or mode == '\22' then
       string_result = M._handle_visual_mode()
-
-      vim.notify(mode, vim.log.levels.INFO)
-      vim.notify(vim.inspect(string_result), vim.log.levels.INFO)
     elseif mode == 'n' then
       string_result = M._handle_normal_mode()
     else
@@ -944,8 +938,32 @@ function M.unescape_string(quote_type)
 
     -- For visual mode, we want to replace just the selected content
     if mode == 'v' or mode == 'V' or mode == '\22' then
-      start_col = string_info.start_pos[2]
-      end_col = string_info.end_pos[2]
+       -- In visual mode, start_pos and end_pos from handle_visual_mode are usually the exact range
+       -- But handle_visual_mode returns 'inner_content' logic?
+       -- Let's check visual_handler again.
+       -- selection_to_string_info returns start_pos etc.
+       -- If I am unescaping, I probably want to replace the WHOLE selection?
+       -- Wait, unescape usually takes existing string and removes escapes.
+       -- If I have `"foo\"bar"`, visual mode selects it all.
+       -- `inner_content` logic in visual_handler:
+       --  `extract_inner_content` removes surrounding quotes if they exist.
+       -- So if I selected `"foo\"bar"`, inner is `foo\"bar`. Unescaped is `foo"bar`.
+       -- If I replace WHOLE selection (`"foo\"bar"`), I replace it with `foo"bar`.
+       -- But wait, standard unescape logic usually replaces existing string with raw string.
+       -- The original code had:
+       
+       -- if mode == 'v'... 
+       --   start_col = string_info.start_pos[2]
+       --   end_col = string_info.end_pos[2]
+       -- else ...
+       --   start_col = string_info.start_pos[2] + 1
+       --   end_col = string_info.end_pos[2] - 1
+       
+       -- This implies in visual mode we replace everything selected.
+       -- In normal mode (treesitter), `string_info` includes quotes, so we +1/-1 to replace inner.
+       
+       start_col = string_info.start_pos[2]
+       end_col = string_info.end_pos[2]
     else
       -- For normal mode with treesitter, replace just the inner content
       start_col = string_info.start_pos[2] + 1 -- Skip opening quote
@@ -991,4 +1009,207 @@ function M.get_config()
   return vim.deepcopy(config)
 end
 
+
+-- Wrap current visual selection in quotes and escape content
+-- @param quote_type string Quote type parameter ('single' or 'double')
+-- @return table API response
+function M.wrap_string(quote_type)
+  local success, result = pcall(function()
+    -- Check if current buffer is modifiable
+    local current_bufnr = vim.api.nvim_get_current_buf()
+    if not vim.api.nvim_buf_get_option(current_bufnr, 'modifiable') then
+      return {
+        success = false,
+        error_code = 'BUFFER_NOT_MODIFIABLE',
+        message = 'Current buffer is not modifiable. Cannot wrap string in read-only buffer.',
+        suggestions = {
+          'Check if file is read-only',
+          'Ensure you have file write permissions',
+          'Try using :set modifiable command'
+        }
+      }
+    end
+
+    -- Detect current mode and get string information
+    local mode = vim.fn.mode()
+    local string_result
+
+    if mode == 'v' or mode == 'V' or mode == '\22' then
+      string_result = M._handle_visual_mode()
+    else
+      -- Try to fallback to last visual selection if possible, or attempt normal mode string detection
+      -- For wrapping, we usually expect a selection. 
+      -- But let's try handle_visual_mode anyway properly.
+      -- If handle_visual_mode fails in normal mode (it checks mode), then we return error.
+      -- Re-check handle_visual_mode: it explicitly checks mode.
+      -- So we must be in visual mode OR we need to fake it or use marks.
+      -- Since I cannot easily change handle_visual_mode right now without risk, 
+      -- I will return error if not in visual mode, similar to escape_string.
+       return {
+        success = false,
+        error_code = 'UNSUPPORTED_MODE',
+        message = 'Please use visual mode to select text to wrap.',
+        suggestions = {
+          'Use v key to enter visual mode and select text'
+        }
+      }
+    end
+
+    if not string_result.success then
+      return string_result
+    end
+
+    local string_info = string_result.data
+
+    -- Validate string content
+    if not string_info.content or string_info.content == '' then
+      return {
+        success = false,
+        error_code = 'EMPTY_CONTENT',
+        message = 'Empty content detected. No content to wrap.',
+      }
+    end
+
+    -- Determine quote char
+    local quote_char = "\""
+    if quote_type == "single" then
+      quote_char = "'"
+    end
+    
+    -- Escape the CONTENT. 
+    -- Note: string_info.content is the RAW selection.
+    -- We want to escape it and wrap it.
+    local content_to_escape = string_info.content
+    local escaped_content = escape_handler.escape(content_to_escape, quote_char)
+    local wrapped_content = quote_char .. escaped_content .. quote_char
+
+    -- Replace content in buffer
+    local start_row = string_info.start_pos[1] - 1
+    local start_col = string_info.start_pos[2]
+    local end_row = string_info.end_pos[1] - 1
+    local end_col = string_info.end_pos[2]
+
+    local replacement_lines = vim.split(wrapped_content, '\n', { plain = true })
+
+    vim.api.nvim_buf_set_text(current_bufnr, start_row, start_col, end_row, end_col, replacement_lines)
+    
+     -- Restore normal mode to clear visual selection
+    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<Esc>', true, false, true), 'n', false)
+
+    return {
+      success = true,
+      message = 'String wrapped and escaped.',
+      data = {
+        wrapped_content = wrapped_content,
+        original_length = #content_to_escape,
+        new_length = #wrapped_content
+      }
+    }
+  end)
+
+  if not success then
+    return {
+      success = false,
+      error_code = 'UNEXPECTED_ERROR',
+      message = 'Unexpected error occurred while wrapping string: ' .. tostring(result)
+    }
+  end
+
+  return result
+end
+
+
+-- Unwrap string: unescape content and remove surrounding quotes
+-- @return table API response
+function M.unwrap_string()
+  local success, result = pcall(function()
+    -- Check if current buffer is modifiable
+    local current_bufnr = vim.api.nvim_get_current_buf()
+    if not vim.api.nvim_buf_get_option(current_bufnr, 'modifiable') then
+      return {
+        success = false,
+        error_code = 'BUFFER_NOT_MODIFIABLE',
+        message = 'Current buffer is not modifiable. Cannot unwrap string in read-only buffer.',
+        suggestions = {
+          'Check if file is read-only',
+          'Ensure you have file write permissions',
+          'Try using :set modifiable command'
+        }
+      }
+    end
+
+    -- Detect current mode and get string information
+    local mode = vim.fn.mode()
+    local string_result
+
+    if mode == 'v' or mode == 'V' or mode == '\22' then
+      string_result = M._handle_visual_mode()
+    elseif mode == 'n' then
+      string_result = M._handle_normal_mode()
+    else
+      return {
+        success = false,
+        error_code = 'UNSUPPORTED_MODE',
+        message = 'Unsupported editor mode. Please use this feature in normal mode or visual mode.'
+      }
+    end
+
+    if not string_result.success then
+      return string_result
+    end
+
+    local string_info = string_result.data
+
+    -- Validate string content
+    if not string_info.inner_content then
+       -- If inner_content is nil/empty, behaves like empty string
+       -- But if content exists, let's process it.
+       -- If empty string, unwrap -> empty.
+    end
+
+    -- Unescape the INNER content
+    local unescaped_content = escape_handler.unescape(string_info.inner_content or "")
+
+    -- Replace the content in the buffer
+    -- For Unwrap, we replace the WHOLE range (start_pos to end_pos) with the inner content.
+    -- This effectively removes the quotes (in Normal mode) or replaces selection (Visual mode).
+    
+    local start_row = string_info.start_pos[1] - 1
+    local start_col = string_info.start_pos[2]
+    local end_row = string_info.end_pos[1] - 1
+    local end_col = string_info.end_pos[2]
+
+    -- Split the unescaped content into lines for replacement
+    local replacement_lines = vim.split(unescaped_content, '\n', { plain = true })
+
+    -- Replace the text in the buffer
+    vim.api.nvim_buf_set_text(current_bufnr, start_row, start_col, end_row, end_col, replacement_lines)
+    
+    -- -- If in visual mode, return to normal mode
+    -- if mode == 'v' or mode == 'V' or mode == '\22' then
+    --    vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<Esc>', true, false, true), 'n', false)
+    -- end
+
+    return {
+      success = true,
+      message = 'String unwrapped successfully.',
+      data = {
+        original_length = #(string_info.content or ""),
+        unwrapped_length = #unescaped_content
+      }
+    }
+  end)
+
+  if not success then
+    return {
+      success = false,
+      error_code = 'UNEXPECTED_ERROR',
+      message = 'Unexpected error occurred while unwrapping string: ' .. tostring(result)
+    }
+  end
+
+  return result
+end
+
 return M
+

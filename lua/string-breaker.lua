@@ -49,6 +49,22 @@ function M.setup(opts)
     range = true, 
     nargs = '?' 
   })
+
+  vim.api.nvim_create_user_command('StringWrap', function(opts)
+    local quote_type = opts.args and opts.args ~= '' and opts.args or nil
+    core.wrap_string(quote_type)
+  end, { 
+    desc = 'Wrap visual selection in quotes and escape content', 
+    range = true, 
+    nargs = '?' 
+  })
+
+  vim.api.nvim_create_user_command('StringUnwrap', function()
+    core.unwrap_string()
+  end, { 
+    desc = 'Unwrap string: unescape and remove quotes', 
+    range = true 
+  })
 end
 
 -- Export public functions
@@ -59,5 +75,7 @@ M.preview = core.preview
 M.cancel = core.cancel
 M.escape_string = core.escape_string
 M.unescape_string = core.unescape_string
+M.wrap_string = core.wrap_string
+M.unwrap_string = core.unwrap_string
 
 return M
